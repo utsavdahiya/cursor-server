@@ -7,6 +7,7 @@ import os
 import subprocess
 import uuid
 import json
+import logging
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pathlib import Path
@@ -18,6 +19,17 @@ from dotenv import load_dotenv
 
 # Load environment variables from .env file if it exists
 load_dotenv()
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('cursor_api_server.log')
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -104,6 +116,8 @@ def find_cursor_agent() -> Optional[str]:
     Find cursor-agent executable in PATH or common locations.
     Returns the full path to cursor-agent if found, None otherwise.
     """
+    logger.debug("Searching for cursor-agent executable")
+    
     # Try which/whereis first
     try:
         result = subprocess.run(
@@ -113,9 +127,11 @@ def find_cursor_agent() -> Optional[str]:
             timeout=2
         )
         if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except:
-        pass
+            path = result.stdout.strip()
+            logger.info(f"Found cursor-agent via 'which': {path}")
+            return path
+    except Exception as e:
+        logger.debug(f"'which' command failed: {e}")
     
     # Try common installation locations
     common_paths = [
@@ -124,10 +140,13 @@ def find_cursor_agent() -> Optional[str]:
         "/usr/bin/cursor-agent",
     ]
     
+    logger.debug(f"Checking common paths: {common_paths}")
     for path in common_paths:
         if os.path.exists(path) and os.access(path, os.X_OK):
+            logger.info(f"Found cursor-agent at: {path}")
             return path
     
+    logger.warning("cursor-agent executable not found")
     return None
 
 
@@ -137,12 +156,16 @@ def execute_cursor_command(cmd: List[str], workspace_path: Optional[str] = None)
     Returns (output, success) tuple.
     """
     workspace = workspace_path or DEFAULT_WORKSPACE
+    logger.info(f"Executing cursor command in workspace: {workspace}")
+    logger.debug(f"Command: {' '.join(cmd[:3])}...")  # Log first 3 parts to avoid logging full prompt
 
     try:
         # Find cursor-agent executable
         cursor_agent_path = find_cursor_agent()
         if not cursor_agent_path:
-            return "cursor-agent CLI not found. Please install it: curl https://cursor.com/install -fsS | bash", False
+            error_msg = "cursor-agent CLI not found. Please install it: curl https://cursor.com/install -fsS | bash"
+            logger.error(error_msg)
+            return error_msg, False
         
         # Replace 'cursor-agent' in command with full path
         if cmd[0] == "cursor-agent":
@@ -155,11 +178,11 @@ def execute_cursor_command(cmd: List[str], workspace_path: Optional[str] = None)
         if local_bin not in env.get("PATH", ""):
             env["PATH"] = f"{local_bin}:{env.get('PATH', '')}"
         
-        if "CURSOR_API_KEY" in env:
-            # API key is already in environment
-            pass
+        api_key_present = "CURSOR_API_KEY" in env
+        logger.debug(f"API key present: {api_key_present}")
 
         # Execute command in the workspace directory
+        logger.debug(f"Running cursor-agent with timeout=300s, cwd={workspace}")
         result = subprocess.run(
             cmd,
             cwd=workspace,
@@ -170,28 +193,38 @@ def execute_cursor_command(cmd: List[str], workspace_path: Optional[str] = None)
         )
 
         if result.returncode == 0:
+            logger.info(f"Command completed successfully (output length: {len(result.stdout)} chars)")
             return result.stdout, True
         else:
             # Provide detailed error information
             error_output = result.stderr or result.stdout
             error_msg = f"Cursor CLI error (exit code {result.returncode}): {error_output}"
+            logger.error(error_msg)
             return error_msg, False
 
     except subprocess.TimeoutExpired:
-        return "Command timed out after 5 minutes", False
+        error_msg = "Command timed out after 5 minutes"
+        logger.error(error_msg)
+        return error_msg, False
     except FileNotFoundError as e:
         # This should rarely happen now since we check for cursor-agent first
-        return f"cursor-agent CLI not found: {str(e)}. Please ensure it's installed and in your PATH.", False
+        error_msg = f"cursor-agent CLI not found: {str(e)}. Please ensure it's installed and in your PATH."
+        logger.error(error_msg)
+        return error_msg, False
     except Exception as e:
-        return f"Error executing command: {str(e)}", False
+        error_msg = f"Error executing command: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        return error_msg, False
 
 
 def get_or_create_session(session_id: Optional[str] = None) -> str:
     """Get existing session or create a new one."""
     if session_id and session_id in sessions:
+        logger.debug(f"Using existing session: {session_id}")
         return session_id
 
     new_session_id = str(uuid.uuid4())
+    logger.info(f"Creating new session: {new_session_id}")
     sessions[new_session_id] = {
         "session_id": new_session_id,
         "created_at": datetime.now().isoformat(),
@@ -213,6 +246,7 @@ def build_contextual_prompt(message: str, session_messages: List[ChatMessage],
 
     # Add file references context
     if files:
+        logger.debug(f"Adding {len(files)} file references to prompt")
         prompt_parts.append("=== Referenced Files ===")
         workspace = workspace_path or DEFAULT_WORKSPACE
         for file_path in files:
@@ -223,19 +257,24 @@ def build_contextual_prompt(message: str, session_messages: List[ChatMessage],
                     # Read file contents
                     with open(full_path, 'r', encoding='utf-8') as f:
                         content = f.read()
+                    logger.debug(f"Successfully read file: {file_path} ({len(content)} chars)")
                     prompt_parts.append(f"File: {file_path}")
                     prompt_parts.append("```")
                     prompt_parts.append(content)
                     prompt_parts.append("```")
                     prompt_parts.append("")
                 except Exception as e:
+                    logger.warning(f"Could not read file {file_path}: {e}")
                     prompt_parts.append(f"File: {file_path} (could not read: {str(e)})")
             else:
+                logger.warning(f"File not found: {file_path}")
                 prompt_parts.append(f"File: {file_path} (not found)")
         prompt_parts.append("")
 
     # Add conversation history
     if session_messages:
+        history_count = min(len(session_messages), 10)
+        logger.debug(f"Adding {history_count} conversation history messages to prompt")
         prompt_parts.append("=== Conversation History ===")
         for msg in session_messages[-10:]:  # Last 10 messages for context
             prompt_parts.append(f"{msg.role}: {msg.content}")
@@ -254,6 +293,9 @@ async def chat(request: ChatRequest):
     Send a message to Cursor Agent and get a response.
     Maintains conversation context through session_id.
     """
+    logger.info(f"Received chat request - session_id: {request.session_id}, model: {request.model}")
+    logger.debug(f"Message preview: {request.message[:100]}...")
+    
     # Get or create session
     session_id = get_or_create_session(request.session_id)
     session = sessions[session_id]
@@ -262,8 +304,10 @@ async def chat(request: ChatRequest):
     session["last_activity"] = datetime.now().isoformat()
     if request.model and request.model != "auto":
         session["model"] = request.model
+        logger.debug(f"Updated session model to: {request.model}")
     if request.workspace_path:
         session["workspace_path"] = request.workspace_path
+        logger.debug(f"Updated session workspace to: {request.workspace_path}")
 
     # Build contextual prompt with conversation history
     contextual_prompt = build_contextual_prompt(
@@ -285,11 +329,14 @@ async def chat(request: ChatRequest):
     output, success = execute_cursor_command(cmd, session["workspace_path"])
 
     if not success:
+        logger.error(f"Chat request failed for session {session_id}: {output}")
         raise HTTPException(status_code=500, detail=output)
 
     # Store messages in session
     session["messages"].append(ChatMessage(role="user", content=request.message))
     session["messages"].append(ChatMessage(role="assistant", content=output))
+    
+    logger.info(f"Chat request completed successfully - session: {session_id}, messages: {len(session['messages'])}")
 
     return ChatResponse(
         response=output,
@@ -302,6 +349,7 @@ async def chat(request: ChatRequest):
 @app.get("/api/sessions", response_model=SessionListResponse)
 async def list_sessions():
     """List all active sessions."""
+    logger.info(f"Listing sessions - total count: {len(sessions)}")
     session_list = []
     for session_id, session_data in sessions.items():
         session_list.append(SessionInfo(
@@ -319,10 +367,13 @@ async def list_sessions():
 @app.get("/api/sessions/{session_id}")
 async def get_session(session_id: str):
     """Get session details and conversation history."""
+    logger.info(f"Getting session details: {session_id}")
     if session_id not in sessions:
+        logger.warning(f"Session not found: {session_id}")
         raise HTTPException(status_code=404, detail="Session not found")
 
     session = sessions[session_id]
+    logger.debug(f"Returning session {session_id} with {len(session['messages'])} messages")
     return {
         "session_id": session["session_id"],
         "created_at": session["created_at"],
@@ -336,10 +387,13 @@ async def get_session(session_id: str):
 @app.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: str):
     """Delete a session."""
+    logger.info(f"Deleting session: {session_id}")
     if session_id not in sessions:
+        logger.warning(f"Session not found for deletion: {session_id}")
         raise HTTPException(status_code=404, detail="Session not found")
 
     del sessions[session_id]
+    logger.info(f"Session deleted successfully: {session_id}")
     return {"message": "Session deleted successfully"}
 
 
@@ -355,7 +409,8 @@ async def list_models():
             "claude-3-opus",
             "claude-3-sonnet",
             "claude-3-haiku",
-            "grok-code-fast-1"
+            "grok-code-fast-1",
+            "gemini-2.5-flash"
         ],
         "default": "auto"
     }
@@ -364,6 +419,7 @@ async def list_models():
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
+    logger.debug("Health check requested")
     cursor_available = False
     cursor_path = find_cursor_agent()
     
@@ -376,11 +432,16 @@ async def health_check():
                 timeout=5
             )
             cursor_available = result.returncode == 0
-        except:
-            pass
+            if cursor_available:
+                logger.debug(f"cursor-agent is available: {cursor_path}")
+        except Exception as e:
+            logger.warning(f"Failed to check cursor-agent version: {e}")
 
+    status = "healthy" if cursor_available else "degraded"
+    logger.info(f"Health check status: {status}, sessions: {len(sessions)}")
+    
     return {
-        "status": "healthy" if cursor_available else "degraded",
+        "status": status,
         "cursor_cli_available": cursor_available,
         "cursor_cli_path": cursor_path if cursor_available else None,
         "sessions_count": len(sessions),
@@ -410,7 +471,7 @@ if __name__ == "__main__":
     import uvicorn
     import socket
 
-    port = int(os.getenv("PORT", 8000))
+    port = int(os.getenv("PORT", 9000))
     host = os.getenv("HOST", "0.0.0.0")
 
     # Check if port is available
@@ -424,16 +485,22 @@ if __name__ == "__main__":
                 return False
 
     if not is_port_available(host, port):
-        print(f"❌ ERROR: Port {port} is already in use!")
+        error_msg = f"Port {port} is already in use"
+        logger.error(error_msg)
+        print(f"❌ ERROR: {error_msg}!")
         print(f"\nTo fix this, you can:")
         print(f"  1. Stop the process using port {port}")
         print(f"  2. Use a different port by setting PORT environment variable:")
-        print(f"     export PORT=8000  # or another available port")
-        print(f"  3. Or update your .env file with: PORT=8000")
+        print(f"     export PORT=9000  # or another available port")
+        print(f"  3. Or update your .env file with: PORT=9000")
         print(f"\nTo find what's using port {port}:")
         print(f"  lsof -i :{port}")
         exit(1)
 
+    logger.info(f"Starting Cursor API Server on {host}:{port}")
+    logger.info(f"Workspace: {DEFAULT_WORKSPACE}")
+    logger.info(f"API Key set: {'CURSOR_API_KEY' in os.environ}")
+    
     print(f"Starting Cursor API Server on {host}:{port}")
     print(f"Workspace: {DEFAULT_WORKSPACE}")
     print(f"API Key set: {'CURSOR_API_KEY' in os.environ}")
@@ -444,8 +511,10 @@ if __name__ == "__main__":
         uvicorn.run(app, host=host, port=port)
     except OSError as e:
         if "address already in use" in str(e).lower():
+            logger.error(f"Port {port} is already in use")
             print(f"\n❌ ERROR: Port {port} is already in use!")
             print(f"Please use a different port or stop the process using port {port}")
             exit(1)
         else:
+            logger.error(f"Failed to start server: {e}", exc_info=True)
             raise

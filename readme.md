@@ -51,7 +51,7 @@ A Python REST API server that exposes Cursor Agent functionality via HTTP endpoi
    cat > .env << 'EOF'
    CURSOR_API_KEY=your_api_key_here
    CURSOR_WORKSPACE=/path/to/your/project
-   PORT=8000
+   PORT=9000
    HOST=0.0.0.0
    EOF
    ```
@@ -60,7 +60,7 @@ A Python REST API server that exposes Cursor Agent functionality via HTTP endpoi
    ```
    CURSOR_API_KEY=your_api_key_here
    CURSOR_WORKSPACE=/path/to/your/project
-   PORT=8000
+   PORT=9000
    HOST=0.0.0.0
    ```
 
@@ -72,7 +72,7 @@ A Python REST API server that exposes Cursor Agent functionality via HTTP endpoi
    ```bash
    export CURSOR_API_KEY=your_api_key_here
    export CURSOR_WORKSPACE=/path/to/your/project  # Optional
-   export PORT=8000  # Optional, default is 8000
+   export PORT=9000  # Optional, default is 9000
    export HOST=0.0.0.0  # Optional, default is 0.0.0.0
    ```
 
@@ -94,7 +94,7 @@ A Python REST API server that exposes Cursor Agent functionality via HTTP endpoi
    python main.py
    ```
 
-The API will be available at `http://localhost:8000` with interactive docs at `http://localhost:8000/docs`.
+The API will be available at `http://localhost:9000` with interactive docs at `http://localhost:9000/docs`.
 
 ## API Endpoints
 
@@ -133,7 +133,7 @@ Health check endpoint.
 
 ### Using curl:sh
 # Create a new chat session
-curl -X POST http://localhost:8000/api/chat \
+curl -X POST http://localhost:9000/api/chat \
   -H "Content-Type: application/json" \
   -d '{
     "message": "Explain this codebase",
@@ -142,7 +142,7 @@ curl -X POST http://localhost:8000/api/chat \
   }'
 
 # Continue conversation with session_id
-curl -X POST http://localhost:8000/api/chat \
+curl -X POST http://localhost:9000/api/chat \
   -H "Content-Type: application/json" \
   -d '{
     "message": "How does sharding work?",
@@ -150,7 +150,7 @@ curl -X POST http://localhost:8000/api/chat \
   }'### Using Python:
 import requests
 
-response = requests.post("http://localhost:8000/api/chat", json={
+response = requests.post("http://localhost:9000/api/chat", json={
     "message": "Explain this codebase",
     "model": "gpt-4",
     "files": ["pom.xml", "src/main/java/..."]

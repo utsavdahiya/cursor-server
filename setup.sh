@@ -55,7 +55,7 @@ echo ""
 echo "Optional: Set environment variables:"
 echo "  export CURSOR_API_KEY=your_api_key_here  # Get from https://cursor.com/settings"
 echo "  export CURSOR_WORKSPACE=/path/to/your/project"
-echo "  export PORT=8000  # Default is 8000"
+echo "  export PORT=9000  # Default is 9000"
 echo "  export HOST=0.0.0.0  # Default is 0.0.0.0"
 
 
