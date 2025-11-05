@@ -4,9 +4,19 @@
 
 set -e
 
+# Create virtual environment if it doesn't exist
+VENV_DIR="venv"
+if [ ! -d "$VENV_DIR" ]; then
+    echo "Creating virtual environment at ./$VENV_DIR..."
+    python3 -m venv "$VENV_DIR"
+    echo "✅ Virtual environment created"
+else
+    echo "Virtual environment already exists at ./$VENV_DIR"
+fi
+
 # Activate virtual environment
-echo "Activating virtual environment at ~/dev-tools/myenv..."
-source ~/dev-tools/myenv/bin/activate
+echo "Activating virtual environment..."
+source "$VENV_DIR/bin/activate"
 
 # Verify Python version
 echo "Python version: $(python --version)"
@@ -49,7 +59,7 @@ echo ""
 echo "✅ Setup complete!"
 echo ""
 echo "To run the server:"
-echo "  1. Activate the environment: source ~/dev-tools/myenv/bin/activate"
+echo "  1. Activate the environment: source venv/bin/activate"
 echo "  2. Run the server: python main.py"
 echo ""
 echo "Optional: Set environment variables:"
